@@ -135,6 +135,7 @@ export class Simple2DScene
     this.controls.target.set(0, 0, 0);
     this.controls.enableRotate = false;
     this.controls.enableZoom = true;
+    this.controls.zoomToCursor = true;
     this.controls.addEventListener("change", () => this.grid.regenerate());
   }
 
