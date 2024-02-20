@@ -9,12 +9,17 @@ import { Disposer } from "../../Disposer";
  * A renderer to determine a mesh visibility on screen
  */
 export class MeshCullerRenderer extends CullerRenderer {
+  /* Pixels in screen a geometry must occupy to be considered "seen". */
+  threshold = 100;
+
   readonly onViewUpdated = new Event<{
     seen: Set<THREE.Mesh>;
     unseen: Set<THREE.Mesh>;
   }>();
 
   colorMeshes = new Map<string, THREE.InstancedMesh>();
+
+  isProcessing = false;
 
   private _colorCodeMeshMap = new Map<string, THREE.Mesh>();
   private _meshIDColorCodeMap = new Map<string, string>();
@@ -31,7 +36,11 @@ export class MeshCullerRenderer extends CullerRenderer {
     super(components, settings);
     this.worker.addEventListener("message", this.handleWorkerMessage);
     if (this.autoUpdate) {
-      window.setInterval(this.updateVisibility, this.updateInterval);
+      window.setInterval(async () => {
+        if (!this.isProcessing) {
+          await this.updateVisibility();
+        }
+      }, this.updateInterval);
     }
   }
 
@@ -56,11 +65,18 @@ export class MeshCullerRenderer extends CullerRenderer {
   add(mesh: THREE.Mesh | THREE.InstancedMesh) {
     if (!this.enabled) return;
 
+    if (this.isProcessing) {
+      console.log("Culler processing not finished yet.");
+      return;
+    }
+
+    this.isProcessing = true;
+
     const isInstanced = mesh instanceof THREE.InstancedMesh;
 
     const { geometry, material } = mesh;
 
-    const { colorMaterial, code } = this.getNextMaterial();
+    const { colorMaterial, code } = this.getAvailableMaterial();
 
     let newMaterial: THREE.Material[] | THREE.Material;
 
@@ -80,13 +96,16 @@ export class MeshCullerRenderer extends CullerRenderer {
       // If we find that all the materials are transparent then we must remove this from analysis
       if (transparentOnly) {
         colorMaterial.dispose();
+        this.isProcessing = false;
         return;
       }
 
       newMaterial = matArray;
     } else if (isTransparent(material)) {
       // This material is transparent, so we must remove it from analysis
+      // TODO: Make transparent meshes blink like in the memory culler?
       colorMaterial.dispose();
+      this.isProcessing = false;
       return;
     } else {
       newMaterial = colorMaterial;
@@ -111,93 +130,61 @@ export class MeshCullerRenderer extends CullerRenderer {
 
     this.scene.add(colorMesh);
     this.colorMeshes.set(mesh.uuid, colorMesh);
+
+    this.increaseColor();
+
+    this.isProcessing = false;
   }
 
   remove(mesh: THREE.Mesh | THREE.InstancedMesh) {
-    // Strategy: Substitute mesh to delete by the last mesh
+    if (this.isProcessing) {
+      console.log("Culler processing not finished yet.");
+      return;
+    }
+
+    this.isProcessing = true;
+
     const disposer = this.components.tools.get(Disposer);
 
     this._currentVisibleMeshes.delete(mesh);
     this._recentlyHiddenMeshes.delete(mesh);
 
-    const { code } = this.getLastColor();
+    const colorMesh = this.colorMeshes.get(mesh.uuid);
+    const code = this._meshIDColorCodeMap.get(mesh.uuid);
 
-    const colorMeshToDelete = this.colorMeshes.get(mesh.uuid);
-    const previousCode = this._meshIDColorCodeMap.get(mesh.uuid);
-    if (!colorMeshToDelete || !previousCode) {
+    if (!colorMesh || !code) {
+      this.isProcessing = false;
+      console.log(mesh.visible);
       return;
     }
-    const lastMesh = this._colorCodeMeshMap.get(code);
-    if (!lastMesh) {
-      throw new Error("Last mesh not found!");
-    }
-    const lastColorMesh = this.colorMeshes.get(lastMesh.uuid);
-    if (!lastColorMesh) {
-      throw new Error("Last color mesh not found!");
-    }
-
-    if (mesh !== lastMesh) {
-      // Get the color of the mesh to delete and give it to the
-      // last mesh
-
-      const colorOfMeshToDelete = new THREE.Color();
-      let colorFound = false;
-      if (Array.isArray(colorMeshToDelete.material)) {
-        for (const mat of colorMeshToDelete.material as THREE.MeshBasicMaterial[]) {
-          if (mat !== this._transparentMat) {
-            colorOfMeshToDelete.copy(mat.color);
-            colorFound = true;
-            mat.dispose();
-            break;
-          }
-        }
-      } else if (colorMeshToDelete.material !== this._transparentMat) {
-        const mat = colorMeshToDelete.material as THREE.MeshBasicMaterial;
-        colorOfMeshToDelete.copy(mat.color);
-        colorFound = true;
-        mat.dispose();
-      }
-
-      if (!colorFound) {
-        throw new Error("Color of mesh to delete not found!");
-      }
-
-      if (Array.isArray(lastColorMesh.material)) {
-        for (const mat of lastColorMesh.material as THREE.MeshBasicMaterial[]) {
-          if (mat !== this._transparentMat) {
-            mat.color.copy(colorOfMeshToDelete);
-          }
-        }
-      } else if (lastColorMesh.material !== this._transparentMat) {
-        const mat = lastColorMesh.material as THREE.MeshBasicMaterial;
-        mat.color.copy(colorOfMeshToDelete);
-      }
-    }
-
-    // Make the last color available again
-    this.decreaseNextColor();
-
-    // Change the deleted mesh by the last mesh
 
     this._colorCodeMeshMap.delete(code);
-    this._colorCodeMeshMap.set(previousCode, lastMesh);
-    this._meshIDColorCodeMap.delete(lastMesh.uuid);
-    this._meshIDColorCodeMap.set(lastMesh.uuid, previousCode);
-
-    // dispose the colorMesh of the deleted geometry
+    this._meshIDColorCodeMap.delete(mesh.uuid);
     this.colorMeshes.delete(mesh.uuid);
-    colorMeshToDelete.geometry = undefined as any;
-    colorMeshToDelete.material = [];
-    disposer.destroy(colorMeshToDelete, false);
+    colorMesh.geometry = undefined as any;
+    colorMesh.material = [];
+    disposer.destroy(colorMesh, true);
+
+    this._recentlyHiddenMeshes.delete(mesh);
+    this._currentVisibleMeshes.delete(mesh);
+
+    this.isProcessing = false;
   }
 
   private handleWorkerMessage = async (event: MessageEvent) => {
+    if (this.isProcessing) {
+      return;
+    }
+
     const colors = event.data.colors as Map<string, number>;
 
     this._recentlyHiddenMeshes = new Set(this._currentVisibleMeshes);
     this._currentVisibleMeshes.clear();
 
-    for (const [code] of colors) {
+    for (const [code, pixels] of colors) {
+      if (pixels < this.threshold) {
+        continue;
+      }
       const mesh = this._colorCodeMeshMap.get(code);
       if (mesh) {
         this._currentVisibleMeshes.add(mesh);
@@ -205,16 +192,18 @@ export class MeshCullerRenderer extends CullerRenderer {
       }
     }
 
-    await this.onViewUpdated.trigger({
+    this.onViewUpdated.trigger({
       seen: this._currentVisibleMeshes,
       unseen: this._recentlyHiddenMeshes,
     });
   };
 
-  private getNextMaterial() {
-    const { r, g, b, code } = this.getNextColor();
+  private getAvailableMaterial() {
+    const { r, g, b, code } = this.getAvailableColor();
+
     const colorEnabled = THREE.ColorManagement.enabled;
     THREE.ColorManagement.enabled = false;
+
     const color = new THREE.Color(`rgb(${r}, ${g}, ${b})`);
     const clippingPlanes = this.components.renderer.clippingPlanes;
     const colorMaterial = new THREE.MeshBasicMaterial({
@@ -222,6 +211,7 @@ export class MeshCullerRenderer extends CullerRenderer {
       clippingPlanes,
       side: THREE.DoubleSide,
     });
+
     THREE.ColorManagement.enabled = colorEnabled;
     return { colorMaterial, code };
   }

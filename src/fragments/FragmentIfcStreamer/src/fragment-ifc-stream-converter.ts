@@ -1,15 +1,7 @@
 import * as WEBIFC from "web-ifc";
 import * as THREE from "three";
 import * as FRAGS from "bim-fragment";
-import {
-  Disposable,
-  Event,
-  UI,
-  Component,
-  UIElement,
-} from "../../../base-types";
-import { FragmentManager } from "../../FragmentManager";
-import { Button, ToastNotification } from "../../../ui";
+import { Disposable, Event, Component } from "../../../base-types";
 import { Components, ToolComponent } from "../../../core";
 import { IfcStreamingSettings } from "./streaming-settings";
 import { StreamedGeometries, StreamedAsset } from "./base-types";
@@ -22,7 +14,7 @@ import { IfcMetadataReader } from "../../FragmentIfcLoader/src/ifc-metadata-read
 
 export class FragmentIfcStreamConverter
   extends Component<WEBIFC.IfcAPI>
-  implements Disposable, UI
+  implements Disposable
 {
   static readonly uuid = "d9999a00-e1f5-4d3f-8cfe-c56e08609764" as const;
 
@@ -41,8 +33,6 @@ export class FragmentIfcStreamConverter
   settings = new IfcStreamingSettings();
 
   enabled: boolean = true;
-
-  uiElement = new UIElement<{ main: Button; toast: ToastNotification }>();
 
   private _spatialTree = new SpatialStructure();
   private _metaData = new IfcMetadataReader();
@@ -78,11 +68,6 @@ export class FragmentIfcStreamConverter
   constructor(components: Components) {
     super(components);
     this.components.tools.add(FragmentIfcStreamConverter.uuid, this);
-
-    if (components.uiEnabled) {
-      this.setupUI();
-    }
-
     this.settings.excludedCategories.add(WEBIFC.IFCOPENINGELEMENT);
   }
 
@@ -94,7 +79,6 @@ export class FragmentIfcStreamConverter
     this.onIfcLoaded.reset();
     this.onGeometryStreamed.reset();
     this.onAssetStreamed.reset();
-    await this.uiElement.dispose();
     (this._webIfc as any) = null;
     await this.onDisposed.trigger(FragmentIfcStreamConverter.uuid);
     this.onDisposed.reset();
@@ -118,42 +102,6 @@ export class FragmentIfcStreamConverter
     this.cleanUp();
 
     console.log(`Streaming the IFC took ${performance.now() - before} ms!`);
-  }
-
-  private setupUI() {
-    const main = new Button(this.components);
-    main.materialIcon = "upload_file";
-    main.tooltip = "Load IFC";
-
-    const toast = new ToastNotification(this.components, {
-      message: "IFC model successfully loaded!",
-    });
-
-    main.onClick.add(() => {
-      const fileOpener = document.createElement("input");
-      fileOpener.type = "file";
-      fileOpener.accept = ".ifc";
-      fileOpener.style.display = "none";
-
-      fileOpener.onchange = async () => {
-        const fragments = this.components.tools.get(FragmentManager);
-        if (fileOpener.files === null || fileOpener.files.length === 0) return;
-        const file = fileOpener.files[0];
-        const buffer = await file.arrayBuffer();
-        const data = new Uint8Array(buffer);
-        await this.streamFromBuffer(data);
-        toast.visible = true;
-        await fragments.updateWindow();
-        fileOpener.remove();
-      };
-
-      fileOpener.click();
-    });
-
-    this.components.ui.add(toast);
-    toast.visible = false;
-
-    this.uiElement.set({ main, toast });
   }
 
   private async readIfcFile(data: Uint8Array) {
@@ -247,9 +195,20 @@ export class FragmentIfcStreamConverter
       await this.streamAssets();
     }
 
-    for (const entry of this._visitedGeometries) {
-      const { index, uuid } = entry[1];
+    const { opaque, transparent } = group.geometryIDs;
+    for (const [id, { index, uuid }] of this._visitedGeometries) {
       group.keyFragments.set(index, uuid);
+      const geometryID = id > 1 ? opaque : transparent;
+      geometryID.set(id, index);
+    }
+
+    // Delete assets that have no geometric representation
+    const ids = group.data.keys();
+    for (const id of ids) {
+      const [keys] = group.data.get(id)!;
+      if (!keys.length) {
+        group.data.delete(id);
+      }
     }
 
     const matrix = this._webIfc.GetCoordinationMatrix(0);
@@ -281,18 +240,32 @@ export class FragmentIfcStreamConverter
 
     const asset: StreamedAsset = { id, geometries: [] };
 
+    if (mesh.expressID === 664833) {
+      console.log("Heyyy");
+    }
+
     for (let i = 0; i < size; i++) {
       const geometry = mesh.geometries.get(i);
       const geometryID = geometry.geometryExpressID;
 
-      if (!this._visitedGeometries.has(geometryID)) {
-        this.getGeometry(webIfc, geometryID);
+      // Distinguish between opaque and transparent geometries
+      const factor = geometry.color.w === 1 ? 1 : -1;
+      const transpGeometryID = geometryID * factor;
+
+      if (!this._visitedGeometries.has(transpGeometryID)) {
+        if (!this._visitedGeometries.has(geometryID)) {
+          // This is the first time we see this geometry
+          this.getGeometry(webIfc, geometryID);
+        }
+
+        // Save geometry for fragment generation
+        // separating transparent and opaque geometries
         const index = this._visitedGeometries.size;
         const uuid = THREE.MathUtils.generateUUID();
-        this._visitedGeometries.set(geometryID, { uuid, index });
+        this._visitedGeometries.set(transpGeometryID, { uuid, index });
       }
 
-      const geometryData = this._visitedGeometries.get(geometryID);
+      const geometryData = this._visitedGeometries.get(transpGeometryID);
       if (geometryData === undefined) {
         throw new Error("Error getting geometry data for streaming!");
       }
