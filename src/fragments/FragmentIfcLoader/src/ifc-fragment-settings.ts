@@ -14,11 +14,15 @@ export class IfcFragmentSettings {
   /** Whether to use the coordination data coming from the IFC files. */
   coordinate = true;
 
-  /** Path of the WASM for [web-ifc](https://github.com/ifcjs/web-ifc). */
-  wasm = {
+  /** Path of the WASM for [web-ifc](https://github.com/ThatOpen/engine_web-ifc). */
+  wasm: {
+    path: string;
+    absolute: boolean;
+    logLevel?: WEBIFC.LogLevel;
+  } = {
     path: "",
     absolute: false,
-    logLevel: WEBIFC.LogLevel.LOG_LEVEL_OFF as WEBIFC.LogLevel | undefined,
+    logLevel: WEBIFC.LogLevel.LOG_LEVEL_OFF,
   };
 
   /** List of categories that won't be converted to fragments. */
@@ -27,7 +31,7 @@ export class IfcFragmentSettings {
   /** Whether to save the absolute location of all IFC items. */
   saveLocations = false;
 
-  /** Loader settings for [web-ifc](https://github.com/ifcjs/web-ifc). */
+  /** Loader settings for [web-ifc](https://github.com/ThatOpen/engine_web-ifc). */
   webIfc: WEBIFC.LoaderSettings = {
     COORDINATE_TO_ORIGIN: true,
     OPTIMIZE_PROFILES: true,

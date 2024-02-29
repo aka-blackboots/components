@@ -73,6 +73,24 @@
     const customEffects = components.renderer.postproduction.customEffects;
     customEffects.excludedMeshes.push(grid.get());
 
+    /*MD
+    ### 🔥🚀 Let's go BIG
+    ___
+    Some BIM models are really heavy, so displaying them using normal methods is not possible.
+    Luckily for you, we have created a system that can load gigabytes of IFC even in modest
+    devices: BIM Tiles! 🧩
+
+    :::info Are you using a library/framework like React, Angular or vue?
+
+    Then probably you have other mechanisms for getting a reference to the
+    HTML div element. However you do it, as long as you get a reference
+    in your code, you are good to go!
+
+    :::
+
+
+    */
+
     // GEOMETRY STREAMING - OK
 
     // const streamer = new OBC.FragmentIfcStreamConverter(components);
@@ -133,7 +151,7 @@
     // STREAM MODEL LOADING - OK
 
     let loader = new OBC.FragmentStreamLoader(components);
-    loader.url = "http://dev.api.thatopen.com/storage?fileId=";
+    loader.url = "THE_URL_TO_YOUR_BACKEND";
     let fragments = new OBC.FragmentManager(components);
 
     async function loadModel(geometryURL, propertiesURL) {
