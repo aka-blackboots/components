@@ -39,7 +39,7 @@ export interface FragmentHighlighterConfig {
 
 export class FragmentHighlighter
   extends Component<HighlightMaterials>
-  implements Disposable, Updateable, Configurable<FragmentHighlighterConfig>
+  implements Disposable, Configurable<FragmentHighlighterConfig>
 {
   static readonly uuid = "cb8a76f2-654a-4b50-80c6-66fd83cafd77" as const;
 
@@ -51,6 +51,11 @@ export class FragmentHighlighter
 
   /** {@link Updateable.onAfterUpdate} */
   readonly onAfterUpdate = new Event<FragmentHighlighter>();
+
+  needsUpdate = false;
+
+  /** {@link Configurable.isSetup} */
+  isSetup = false;
 
   enabled = true;
   highlightMats: HighlightMaterials = {};
@@ -200,15 +205,14 @@ export class FragmentHighlighter
       onClear: new Event(),
     };
 
-    await this.update();
+    await this.updateHighlight();
   }
 
-  /** {@link Updateable.update} */
-  async update() {
+  async updateHighlight() {
     if (!this.fillEnabled) {
       return;
     }
-    this.onBeforeUpdate.trigger(this);
+    await this.onBeforeUpdate.trigger(this);
     const fragments = this.components.tools.get(FragmentManager);
     for (const fragmentID in fragments.list) {
       const fragment = fragments.list[fragmentID];
@@ -216,10 +220,13 @@ export class FragmentHighlighter
       const outlinedMesh = this._outlinedMeshes[fragmentID];
       if (outlinedMesh) {
         fragment.mesh.updateMatrixWorld(true);
+        outlinedMesh.position.set(0, 0, 0);
+        outlinedMesh.rotation.set(0, 0, 0);
+        outlinedMesh.scale.set(1, 1, 1);
         outlinedMesh.applyMatrix4(fragment.mesh.matrixWorld);
       }
     }
-    this.onAfterUpdate.trigger(this);
+    await this.onAfterUpdate.trigger(this);
   }
 
   async highlight(
@@ -359,6 +366,7 @@ export class FragmentHighlighter
     await this.add(this.config.hoverName, [this.config.hoverMaterial]);
     this.setupEvents(true);
     this.enabled = true;
+    this.isSetup = true;
     await this.onSetup.trigger(this);
   }
 
